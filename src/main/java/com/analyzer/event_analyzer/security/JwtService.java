@@ -1,19 +1,15 @@
-package com.analyzer.event_analyzer;
+package com.analyzer.event_analyzer.security;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
-import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.SecretKey;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.function.Function;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 
 @Service
 public class JwtService {
@@ -24,65 +20,79 @@ public class JwtService {
     @Value("${app.security.jwt.expiration-ms}")
     private long expirationMs;
 
-    // Genera token per un utente
+    // Versione semplificata per generare un token
     public String generateToken(UserDetails userDetails) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("roles", userDetails.getAuthorities());
+        long now = System.currentTimeMillis();
+        long expirationTime = now + expirationMs;
 
-        return createToken(claims, userDetails.getUsername());
+        String data = userDetails.getUsername() + ":" + expirationTime;
+        String signature = createSignature(data);
+
+        return Base64.getEncoder().encodeToString(data.getBytes(StandardCharsets.UTF_8))
+                + "." + signature;
     }
 
-    // Crea il token JWT
-    private String createToken(Map<String, Object> claims, String subject) {
-        Date now = new Date();
-        Date expiration = new Date(now.getTime() + expirationMs);
-
-        SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-
-        return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(subject)
-                .setIssuedAt(now)
-                .setExpiration(expiration)
-                .signWith(key, SignatureAlgorithm.HS512)
-                .compact();
+    // Crea una firma HMAC per il token
+    private String createSignature(String data) {
+        try {
+            Mac hmac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec secretKey = new SecretKeySpec(
+                    secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            hmac.init(secretKey);
+            byte[] hash = hmac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(hash);
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            throw new RuntimeException("Error signing JWT", e);
+        }
     }
 
     // Estrae il nome utente dal token
     public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
+        String[] parts = token.split("\\.");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid token format");
+        }
 
-    // Estrae la data di scadenza dal token
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
-    }
-
-    // Estrae una claim specifica usando un resolver
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    // Estrae tutte le claims dal token
-    private Claims extractAllClaims(String token) {
-        SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
-
-        return Jwts.parserBuilder()
-                .setSigningKey(key)
-                .build()
-                .parseClaimsJws(token)
-                .getBody();
+        String decodedData = new String(
+                Base64.getDecoder().decode(parts[0]), StandardCharsets.UTF_8);
+        return decodedData.split(":")[0];
     }
 
     // Verifica se il token è scaduto
-    private Boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+    private boolean isTokenExpired(String token) {
+        long expirationTime = extractExpirationTime(token);
+        return expirationTime < System.currentTimeMillis();
+    }
+
+    private long extractExpirationTime(String token) {
+        String[] parts = token.split("\\.");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("Invalid token format");
+        }
+
+        String decodedData = new String(
+                Base64.getDecoder().decode(parts[0]), StandardCharsets.UTF_8);
+        return Long.parseLong(decodedData.split(":")[1]);
     }
 
     // Valida il token
     public Boolean validateToken(String token, UserDetails userDetails) {
-        final String username = extractUsername(token);
-        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+        try {
+            String username = extractUsername(token);
+            String[] parts = token.split("\\.");
+
+            String data = new String(
+                    Base64.getDecoder().decode(parts[0]), StandardCharsets.UTF_8);
+            String providedSignature = parts[1];
+            String expectedSignature = createSignature(data);
+
+            boolean signatureValid = expectedSignature.equals(providedSignature);
+
+            return username.equals(userDetails.getUsername())
+                    && !isTokenExpired(token)
+                    && signatureValid;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

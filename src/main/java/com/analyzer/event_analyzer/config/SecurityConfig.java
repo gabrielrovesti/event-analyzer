@@ -1,4 +1,4 @@
-package com.analyzer.event_analyzer;
+package com.analyzer.event_analyzer.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
