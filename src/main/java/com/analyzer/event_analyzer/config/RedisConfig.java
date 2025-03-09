@@ -2,6 +2,7 @@ package com.analyzer.event_analyzer.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
@@ -15,6 +16,7 @@ import com.analyzer.event_analyzer.model.Event;
 public class RedisConfig {
 
     @Bean
+    @Primary  // Aggiunge questa annotazione per indicare che questo è il bean da preferire
     public ReactiveRedisConnectionFactory reactiveRedisConnectionFactory() {
         return new LettuceConnectionFactory("localhost", 6379);
     }
